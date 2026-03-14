@@ -150,3 +150,86 @@ def get_episode_audio_url(
         "SELECT rss_audio_url FROM episodes WHERE spotify_id = ?", [episode_spotify_id]
     ).fetchone()
     return row[0] if row else None
+
+
+def get_transcript_by_episode_id(
+    conn: duckdb.DuckDBPyConnection, episode_spotify_id: str
+) -> Optional[dict]:
+    """Return transcript metadata if this exact episode has already been transcribed."""
+    row = conn.execute(
+        """
+        SELECT t.id, t.file_name, t.local_file_path, t.word_count, t.transcribed_at,
+               e.name AS episode_name, s.name AS show_name, e.release_date
+        FROM transcripts t
+        JOIN episodes e ON t.episode_spotify_id = e.spotify_id
+        JOIN shows s ON e.show_spotify_id = s.spotify_id
+        WHERE t.episode_spotify_id = ?
+        LIMIT 1
+        """,
+        [episode_spotify_id],
+    ).fetchone()
+    if not row:
+        return None
+    return {
+        "id": row[0],
+        "file_name": row[1],
+        "local_file_path": row[2],
+        "word_count": row[3],
+        "transcribed_at": row[4],
+        "episode_name": row[5],
+        "show_name": row[6],
+        "release_date": row[7],
+    }
+
+
+def get_similar_transcripts(
+    conn: duckdb.DuckDBPyConnection,
+    show_spotify_id: str,
+    episode_name: str,
+    exclude_episode_id: str,
+    limit: int = 5,
+    min_similarity: float = 0.6,
+) -> list:
+    """Return up to *limit* transcribed episodes from the same show whose names
+    are similar to *episode_name*, ordered by jaro_winkler similarity (descending).
+    Episodes below *min_similarity* are excluded.
+    """
+    rows = conn.execute(
+        """
+        SELECT
+            s.name AS show_name,
+            e.name AS episode_name,
+            e.release_date,
+            t.file_name,
+            t.local_file_path,
+            t.word_count,
+            t.transcribed_at,
+            jaro_winkler_similarity(LOWER(e.name), LOWER(?)) AS similarity
+        FROM transcripts t
+        JOIN episodes e ON t.episode_spotify_id = e.spotify_id
+        JOIN shows s ON e.show_spotify_id = s.spotify_id
+        WHERE e.show_spotify_id = ?
+          AND e.spotify_id != ?
+        ORDER BY similarity DESC
+        LIMIT ?
+        """,
+        [episode_name, show_spotify_id, exclude_episode_id, limit],
+    ).fetchall()
+
+    results = []
+    for row in rows:
+        similarity = row[7]
+        if similarity >= min_similarity:
+            results.append(
+                {
+                    "show_name": row[0],
+                    "episode_name": row[1],
+                    "release_date": str(row[2]) if row[2] else None,
+                    "file_name": row[3],
+                    "local_file_path": row[4],
+                    "word_count": row[5],
+                    "transcribed_at": row[6],
+                    "similarity": similarity,
+                }
+            )
+    return results

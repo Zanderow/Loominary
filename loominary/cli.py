@@ -131,6 +131,23 @@ def _process_episode(db_conn, show: ShowMetadata, episode: EpisodeMetadata) -> N
 
     console.print(f"\n[bold]Episode:[/bold] {episode.name}")
 
+    # --- Duplicate detection ---
+    # 1. Exact match: same Spotify episode ID already has a transcript
+    existing = repository.get_transcript_by_episode_id(db_conn, episode.spotify_id)
+    if existing:
+        _show_existing_transcript(existing)
+        console.print("[yellow]This episode has already been transcribed. Skipping.[/yellow]")
+        return
+
+    # 2. Similar matches within the same show
+    similar = repository.get_similar_transcripts(
+        db_conn, show.spotify_id, episode.name, episode.spotify_id
+    )
+    if similar:
+        proceed = _ask_about_similar(similar)
+        if not proceed:
+            return
+
     # Check cached RSS + audio URL
     audio_url = repository.get_episode_audio_url(db_conn, episode.spotify_id)
     rss_url = None
@@ -219,6 +236,64 @@ def _process_episode(db_conn, show: ShowMetadata, episode: EpisodeMetadata) -> N
         upload = questionary.confirm("Upload transcript to Google Drive?", default=False).ask()
         if upload:
             _upload_to_drive(db_conn, transcript_id, txt_path, show.name)
+
+
+def _show_existing_transcript(existing: dict) -> None:
+    """Print a summary table for an already-transcribed episode."""
+    table = Table(title="Transcript Already Exists", border_style="yellow")
+    table.add_column("Field", style="bold")
+    table.add_column("Value")
+    table.add_row("Show", existing.get("show_name") or "—")
+    table.add_row("Episode", existing.get("episode_name") or "—")
+    table.add_row("Release date", existing.get("release_date") or "—")
+    table.add_row("File", existing.get("file_name") or "—")
+    table.add_row(
+        "Word count",
+        f"{existing['word_count']:,}" if existing.get("word_count") else "—",
+    )
+    table.add_row("Transcribed at", str(existing.get("transcribed_at") or "—"))
+    table.add_row("Path", existing.get("local_file_path") or "—")
+    console.print(table)
+
+
+def _ask_about_similar(similar: list) -> bool:
+    """Show top similar transcripts and ask the user whether to proceed.
+
+    Returns True if the user wants to go ahead with transcription, False to stop.
+    """
+    console.print(
+        "\n[yellow]Similar transcripts were found in this show.[/yellow] "
+        "Is the episode you selected already among these?"
+    )
+
+    choice_labels = []
+    for s in similar:
+        date_str = s.get("release_date") or "????"
+        pct = int(s["similarity"] * 100)
+        label = f"{date_str} — {s['episode_name'][:70]}  [{pct}% match]  ({s['file_name']})"
+        choice_labels.append(label)
+
+    proceed_label = "None of these — proceed with transcription"
+    cancel_label = "Cancel"
+    all_choices = choice_labels + [proceed_label, cancel_label]
+
+    selected = questionary.select(
+        "Select a match if it already exists, or choose to proceed:",
+        choices=all_choices,
+    ).ask()
+
+    if selected is None or selected == cancel_label:
+        return False
+
+    if selected == proceed_label:
+        return True
+
+    # User identified one of the similar results as the existing transcript
+    idx = choice_labels.index(selected)
+    matched = similar[idx]
+    _show_existing_transcript(matched)
+    console.print("[yellow]Transcription cancelled — existing transcript shown above.[/yellow]")
+    return False
 
 
 def _show_summary(episode: EpisodeMetadata, txt_path: Path, result, word_count: int) -> None:
