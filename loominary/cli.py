@@ -1,6 +1,7 @@
 """Interactive menus + full workflow orchestration."""
 import json
 import sys
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -186,6 +187,7 @@ def _process_episode(db_conn, show: ShowMetadata, episode: EpisodeMetadata) -> N
 
     # Transcribe
     engine = _get_transcription_engine()
+    transcribe_start = time.time()
     try:
         result = engine.transcribe(str(audio_path))
     except MemoryError as e:
@@ -202,6 +204,7 @@ def _process_episode(db_conn, show: ShowMetadata, episode: EpisodeMetadata) -> N
         return
     finally:
         cleanup_audio(audio_path)
+    transcribe_elapsed = time.time() - transcribe_start
 
     # Save transcript
     txt_filename = build_filename(episode.release_date, show.name, episode.name, ext=".txt")
@@ -229,7 +232,7 @@ def _process_episode(db_conn, show: ShowMetadata, episode: EpisodeMetadata) -> N
     }
     transcript_id = repository.insert_transcript(db_conn, transcript_record)
 
-    _show_summary(episode, txt_path, result, word_count)
+    _show_summary(episode, txt_path, result, word_count, transcribe_elapsed)
 
     # Optional Google Drive upload
     if config.GOOGLE_CLIENT_SECRETS_FILE:
@@ -245,7 +248,7 @@ def _show_existing_transcript(existing: dict) -> None:
     table.add_column("Value")
     table.add_row("Show", existing.get("show_name") or "—")
     table.add_row("Episode", existing.get("episode_name") or "—")
-    table.add_row("Release date", existing.get("release_date") or "—")
+    table.add_row("Release date", str(existing.get("release_date") or "—"))
     table.add_row("File", existing.get("file_name") or "—")
     table.add_row(
         "Word count",
@@ -296,13 +299,18 @@ def _ask_about_similar(similar: list) -> bool:
     return False
 
 
-def _show_summary(episode: EpisodeMetadata, txt_path: Path, result, word_count: int) -> None:
+def _show_summary(episode: EpisodeMetadata, txt_path: Path, result, word_count: int, elapsed: float = 0.0) -> None:
+    m, s = divmod(int(elapsed), 60)
+    h, m = divmod(m, 60)
+    elapsed_str = f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
+
     table = Table(title="Transcription Complete", border_style="green")
     table.add_column("Field", style="bold")
     table.add_column("Value")
     table.add_row("Episode", episode.name[:60])
     table.add_row("Language", result.language)
     table.add_row("Word count", f"{word_count:,}")
+    table.add_row("Time taken", elapsed_str)
     table.add_row("Output file", str(txt_path))
     console.print(table)
 

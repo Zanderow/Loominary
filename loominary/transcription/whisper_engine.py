@@ -4,6 +4,8 @@ import tempfile
 import os
 from pathlib import Path
 
+from rich.progress import Progress, BarColumn, TaskProgressColumn, TextColumn, TimeElapsedColumn
+
 from loominary.transcription.base import TranscriptionEngine, TranscriptResult
 from loominary.utils.progress import console
 
@@ -67,36 +69,53 @@ class WhisperEngine(TranscriptionEngine):
         detected_language = ""
 
         starts = list(range(0, int(duration), CHUNK_SIZE_S))
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            for i, start in enumerate(starts):
-                chunk_path = os.path.join(tmp_dir, f"chunk_{i:04d}.mp3")
-                _ffmpeg_slice(audio_path, chunk_path, start, CHUNK_SIZE_S)
+        with Progress(
+            TextColumn(f"[cyan]Transcribing ({self._model_size})[/cyan]"),
+            BarColumn(),
+            TaskProgressColumn(),
+            TextColumn("[dim]{task.description}[/dim]"),
+            TimeElapsedColumn(),
+            console=console,
+            transient=False,
+        ) as progress:
+            task = progress.add_task(
+                f"chunk 1/{len(starts)}",
+                total=len(starts),
+            )
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                for i, start in enumerate(starts):
+                    end_min = min(start + CHUNK_SIZE_S, int(duration)) // 60
+                    progress.update(
+                        task,
+                        description=f"chunk {i+1}/{len(starts)}  ({start//60}–{end_min} min)",
+                    )
 
-                console.print(
-                    f"[cyan]Transcribing chunk {i+1}/{len(starts)} "
-                    f"({start//60}–{min(start+CHUNK_SIZE_S, int(duration))//60} min)...[/cyan]"
-                )
-                try:
-                    result = self._model.transcribe(chunk_path, fp16=False, word_timestamps=True)
-                except MemoryError as e:
-                    raise MemoryError(
-                        f"Ran out of RAM on chunk {i+1}. "
-                        "Set WHISPER_BACKEND=faster-whisper in .env or use WHISPER_MODEL=tiny."
-                    ) from e
+                    chunk_path = os.path.join(tmp_dir, f"chunk_{i:04d}.mp3")
+                    _ffmpeg_slice(audio_path, chunk_path, start, CHUNK_SIZE_S)
 
-                if not detected_language:
-                    detected_language = result.get("language", "")
+                    try:
+                        result = self._model.transcribe(chunk_path, fp16=False, word_timestamps=True)
+                    except MemoryError as e:
+                        raise MemoryError(
+                            f"Ran out of RAM on chunk {i+1}. "
+                            "Set WHISPER_BACKEND=faster-whisper in .env or use WHISPER_MODEL=tiny."
+                        ) from e
 
-                chunk_text = result["text"].strip()
-                if chunk_text:
-                    all_text.append(chunk_text)
+                    if not detected_language:
+                        detected_language = result.get("language", "")
 
-                for seg in result.get("segments", []):
-                    all_segments.append({
-                        "start": seg["start"] + start,
-                        "end": seg["end"] + start,
-                        "text": seg["text"],
-                    })
+                    chunk_text = result["text"].strip()
+                    if chunk_text:
+                        all_text.append(chunk_text)
+
+                    for seg in result.get("segments", []):
+                        all_segments.append({
+                            "start": seg["start"] + start,
+                            "end": seg["end"] + start,
+                            "text": seg["text"],
+                        })
+
+                    progress.advance(task)
 
         return TranscriptResult(
             text=" ".join(all_text),
