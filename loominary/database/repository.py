@@ -182,6 +182,48 @@ def get_transcript_by_episode_id(
     }
 
 
+def insert_meeting(
+    conn: duckdb.DuckDBPyConnection,
+    name: str,
+    url: str,
+    platform: str,
+    recording_path: str,
+    start_time,
+) -> int:
+    """Insert a meeting record and return its generated id."""
+    result = conn.execute(
+        """
+        INSERT INTO meetings (name, url, platform, recording_path, start_time)
+        VALUES (?, ?, ?, ?, ?)
+        RETURNING id
+        """,
+        [name, url, platform, recording_path, start_time],
+    ).fetchone()
+    return result[0]
+
+
+def insert_meeting_transcript(
+    conn: duckdb.DuckDBPyConnection,
+    meeting_id: int,
+    transcript_path: str,
+    word_count: int,
+    whisper_model: str,
+    whisper_backend: str,
+    language: str,
+) -> int:
+    """Insert a meeting transcript record and return its generated id."""
+    result = conn.execute(
+        """
+        INSERT INTO meeting_transcripts
+            (meeting_id, transcript_path, word_count, whisper_model, whisper_backend, language)
+        VALUES (?, ?, ?, ?, ?, ?)
+        RETURNING id
+        """,
+        [meeting_id, transcript_path, word_count, whisper_model, whisper_backend, language],
+    ).fetchone()
+    return result[0]
+
+
 def get_similar_transcripts(
     conn: duckdb.DuckDBPyConnection,
     show_spotify_id: str,

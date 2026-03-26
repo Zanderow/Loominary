@@ -19,6 +19,7 @@ def build_filename(
     show_name: str,
     episode_name: str,
     ext: str = ".txt",
+    prefix: str = "podcast",
 ) -> str:
     """Build a standardized filename from show/episode metadata."""
     if isinstance(release_date, date):
@@ -30,7 +31,7 @@ def build_filename(
 
     show_slug = slugify(show_name)
     ep_slug = slugify(episode_name)
-    return f"{date_str}_{show_slug}_{ep_slug}{ext}"
+    return f"{prefix}_{date_str}_{show_slug}_{ep_slug}{ext}"
 
 
 def unique_path(directory: Path, filename: str) -> Path:

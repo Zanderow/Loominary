@@ -48,4 +48,42 @@ CREATE TABLE IF NOT EXISTS transcripts (
 );
 """
 
-ALL_STATEMENTS = [CREATE_SHOWS, CREATE_EPISODES, CREATE_TRANSCRIPTS_SEQ, CREATE_TRANSCRIPTS]
+CREATE_MEETINGS_SEQ = "CREATE SEQUENCE IF NOT EXISTS meetings_id_seq;"
+
+CREATE_MEETINGS = """
+CREATE TABLE IF NOT EXISTS meetings (
+    id               BIGINT DEFAULT nextval('meetings_id_seq') PRIMARY KEY,
+    name             VARCHAR NOT NULL,
+    url              VARCHAR,
+    platform         VARCHAR,
+    recording_path   VARCHAR,
+    start_time       TIMESTAMP,
+    created_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+"""
+
+CREATE_MEETING_TRANSCRIPTS_SEQ = "CREATE SEQUENCE IF NOT EXISTS meeting_transcripts_id_seq;"
+
+CREATE_MEETING_TRANSCRIPTS = """
+CREATE TABLE IF NOT EXISTS meeting_transcripts (
+    id               BIGINT DEFAULT nextval('meeting_transcripts_id_seq') PRIMARY KEY,
+    meeting_id       BIGINT REFERENCES meetings(id),
+    transcript_path  VARCHAR,
+    word_count       INTEGER,
+    whisper_model    VARCHAR,
+    whisper_backend  VARCHAR,
+    language         VARCHAR,
+    created_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+"""
+
+ALL_STATEMENTS = [
+    CREATE_SHOWS,
+    CREATE_EPISODES,
+    CREATE_TRANSCRIPTS_SEQ,
+    CREATE_TRANSCRIPTS,
+    CREATE_MEETINGS_SEQ,
+    CREATE_MEETINGS,
+    CREATE_MEETING_TRANSCRIPTS_SEQ,
+    CREATE_MEETING_TRANSCRIPTS,
+]

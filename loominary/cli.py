@@ -175,7 +175,7 @@ def _process_episode(db_conn, show: ShowMetadata, episode: EpisodeMetadata) -> N
         repository.update_episode_audio_url(db_conn, episode.spotify_id, audio_url)
 
     # Build filename
-    filename_base = build_filename(episode.release_date, show.name, episode.name, ext=".mp3")
+    filename_base = build_filename(episode.release_date, show.name, episode.name, ext=".mp3", prefix="podcast")
     tmp_path = unique_path(config.LOOMINARY_TMP_DIR / "audio", filename_base)
 
     # Download
@@ -207,7 +207,7 @@ def _process_episode(db_conn, show: ShowMetadata, episode: EpisodeMetadata) -> N
     transcribe_elapsed = time.time() - transcribe_start
 
     # Save transcript
-    txt_filename = build_filename(episode.release_date, show.name, episode.name, ext=".txt")
+    txt_filename = build_filename(episode.release_date, show.name, episode.name, ext=".txt", prefix="podcast")
     config.LOOMINARY_TRANSCRIPTS_DIR.mkdir(parents=True, exist_ok=True)
     txt_path = unique_path(config.LOOMINARY_TRANSCRIPTS_DIR, txt_filename)
     txt_path.write_text(result.text, encoding="utf-8")
