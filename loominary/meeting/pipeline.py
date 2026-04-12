@@ -124,6 +124,10 @@ def _run_automatic(conn) -> None:
 
     _show_summary(cfg.name, transcript_path, result.language, word_count, elapsed)
 
+    # Auto-index into vector store
+    from loominary.rag.indexer import auto_index_after_transcription
+    auto_index_after_transcription(conn, transcript_path, "meeting")
+
     # Post-meeting wait + optional shutdown
     should_shutdown = questionary.confirm(
         "Shut down the computer after the post-meeting wait?", default=False
@@ -223,6 +227,11 @@ def _run_manual(conn) -> None:
     _insert_meeting_transcript_db(conn, meeting_id, str(transcript_path), word_count, result.language)
 
     _show_summary(name, transcript_path, result.language, word_count, elapsed)
+
+    # Auto-index into vector store
+    from loominary.rag.indexer import auto_index_after_transcription
+    auto_index_after_transcription(conn, transcript_path, "meeting")
+
     console.print("[green]All done![/green]")
 
 

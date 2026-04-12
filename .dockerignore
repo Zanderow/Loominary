@@ -1,0 +1,35 @@
+# Git
+.git
+.gitignore
+
+# Python env
+.venv
+__pycache__
+*.pyc
+*.pyo
+
+# Secrets
+.env
+!.env.example
+
+# Data (mounted at runtime, not baked into image)
+data/
+tmp/
+meetings/
+
+# Model weights (downloaded in Dockerfile build stage)
+models/
+
+# Crash dumps
+*.stackdump
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor / IDE
+.vscode/
+.idea/
+
+# Docker (avoid recursive context)
+docker-compose*.yml

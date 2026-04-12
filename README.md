@@ -14,6 +14,9 @@ Transform podcast episodes into searchable text transcripts — or record and tr
 | Transcription | faster-whisper (default) · OpenAI Whisper (alternative) |
 | Screen/audio capture | ffmpeg (gdigrab + WASAPI loopback) |
 | Database | DuckDB |
+| Vector store | Qdrant (server or embedded local) |
+| Embeddings | BGE-M3 (1024-dim dense + BM25 sparse) |
+| LLM | Qwen3.5-35B-A3B via llama.cpp server |
 | CLI | rich · questionary |
 | Google Drive | Google Drive API v3 |
 
@@ -113,6 +116,8 @@ You are first asked what you want to do:
 ? What would you like to do?
   > Transcribe a podcast
     Record a meeting
+    Chat with library
+    Reindex all transcripts
 ```
 
 ---
@@ -253,6 +258,263 @@ Segments: 142
 
 ---
 
+## RAG Chat — Chat with Your Library
+
+Loominary includes a built-in RAG (retrieval-augmented generation) chatbot that lets you ask questions across all your transcribed podcasts and meetings. It uses:
+
+- **BGE-M3** for dense embeddings (1024-dim)
+- **BM25** for sparse keyword matching
+- **Qdrant** for hybrid vector search (dense + sparse fused with Reciprocal Rank Fusion)
+- **Qwen3.5-35B-A3B** (3B active params, MoE) via llama.cpp for answer generation
+
+### How it works
+
+1. Transcripts are split into 512-token chunks (with 64-token overlap)
+2. Each chunk is embedded with BGE-M3 (dense) and BM25 (sparse), then stored in Qdrant with metadata (show name, episode title, dates, etc.)
+3. When you ask a question, both embedding types are searched and results are fused with RRF
+4. The top 5 relevant chunks are injected into a grounded prompt sent to the LLM
+5. The LLM answers using only the provided excerpts and cites its sources with `[1]`, `[2]`, etc.
+
+### Indexing
+
+Transcripts are **automatically indexed** after each transcription (both podcast and meeting modes). You can also manually reindex everything via the main menu:
+
+```
+? What would you like to do? Reindex all transcripts
+? Force re-index even if files are unchanged? No
+```
+
+Reindexing is idempotent — files whose content hash hasn't changed are skipped.
+
+### Two ways to run it
+
+The RAG chatbot requires two backend services: a **vector database** (Qdrant) and an **LLM server** (llama.cpp). You can run these locally or via Docker — choose the option that fits your situation:
+
+---
+
+#### Option A — Local development (no Docker required)
+
+**When to use:** Day-to-day development, quick testing, single-machine use. No server processes to manage. The vector database runs embedded (no Qdrant server needed), but you still need a local llama.cpp server for the LLM.
+
+In this mode, Qdrant runs as an **embedded local database** stored at `data/qdrant_local/`. The fallback activates automatically when no Qdrant server is reachable — no Docker or separate Qdrant process needed.
+
+##### Step 1 — Install Loominary dependencies
+
+```bash
+cd Loominary
+uv sync
+```
+
+##### Step 2 — Download llama.cpp (pre-built binary)
+
+llama.cpp is the inference engine that runs the Qwen3.5 LLM locally. You need to download the correct pre-built binary for your system.
+
+**How to choose the right binary:**
+
+First, identify your system:
+
+```bash
+# Check your CPU (to determine AVX support)
+wmic cpu get Name
+
+# Check available RAM
+systeminfo | findstr "Total Physical Memory"
+```
+
+Then go to the [llama.cpp releases page](https://github.com/ggml-org/llama.cpp/releases/) and download the latest release zip that matches your system:
+
+| Your system | Download file to look for |
+|---|---|
+| Windows, modern CPU (Intel Haswell+ / AMD Zen+) | `llama-<version>-bin-win-avx2-x64.zip` |
+| Windows, older CPU (no AVX2) | `llama-<version>-bin-win-avx-x64.zip` |
+| Windows, NVIDIA GPU | `llama-<version>-bin-win-cuda-cu12.4.1-x64.zip` |
+| macOS, Apple Silicon (M1/M2/M3/M4) | `llama-<version>-bin-macos-arm64.zip` |
+| macOS, Intel | `llama-<version>-bin-macos-x64.zip` |
+| Linux, x64 | `llama-<version>-bin-ubuntu-x64.zip` |
+| Linux, NVIDIA GPU | `llama-<version>-bin-ubuntu-x64-cuda-cu12.4.1.zip` |
+
+> **How to check AVX2 support (Windows):** Most CPUs from 2014 onward support AVX2. If unsure, open PowerShell and run: `(Get-CimInstance Win32_Processor).Name` — then look up your CPU model. AMD Ryzen and Intel 4th-gen Core or newer all support AVX2.
+
+> **Why AVX2 matters:** AVX2 enables SIMD (Single Instruction, Multiple Data) vector operations that dramatically speed up the matrix multiplications in LLM inference. The AVX2 build will be significantly faster than the plain AVX build on supported CPUs.
+
+Extract the zip to a location of your choice, for example:
+
+```powershell
+# Windows example
+mkdir C:\llama-cpp
+# Extract the downloaded zip into C:\llama-cpp
+# You should see llama-server.exe (or llama-server on macOS/Linux) inside
+```
+
+```bash
+# macOS / Linux example
+mkdir -p ~/llama-cpp
+cd ~/llama-cpp
+unzip ~/Downloads/llama-*.zip
+```
+
+##### Step 3 — Download the model weights (one-time, ~21.6 GB)
+
+The chatbot uses [Qwen3.5-35B-A3B](https://huggingface.co/Qwen/Qwen3.5-35B-A3B), a Mixture-of-Experts model with 35B total parameters but only 3B active per token — making it feasible to run on CPU with ~28 GB RAM. We use the [MXFP4 quantized GGUF](https://huggingface.co/unsloth/Qwen3.5-35B-A3B-GGUF) from Unsloth.
+
+```bash
+mkdir -p models
+
+# This will take a while depending on your connection (~21.6 GB)
+curl -L -o models/qwen3.5-35b-a3b.gguf \
+  "https://huggingface.co/unsloth/Qwen3.5-35B-A3B-GGUF/resolve/main/Qwen3.5-35B-A3B-MXFP4_MOE.gguf?download=true"
+```
+
+Verify the download completed (should be ~21.6 GB):
+
+```bash
+ls -lh models/qwen3.5-35b-a3b.gguf
+```
+
+##### Step 4 — Start the llama.cpp server
+
+Open a **separate terminal** (this server needs to stay running while you use Loominary):
+
+```bash
+# Adjust the path to where you extracted llama.cpp
+# Adjust --threads to match your CPU core count (not logical processors)
+
+# Windows
+C:\llama-cpp\llama-server.exe ^
+  --model models\qwen3.5-35b-a3b.gguf ^
+  --host 0.0.0.0 ^
+  --port 8080 ^
+  --ctx-size 8192 ^
+  --threads 8 ^
+  --parallel 1
+
+# macOS / Linux
+~/llama-cpp/llama-server \
+  --model models/qwen3.5-35b-a3b.gguf \
+  --host 0.0.0.0 \
+  --port 8080 \
+  --ctx-size 8192 \
+  --threads 8 \
+  --parallel 1
+```
+
+| Flag | Purpose |
+|---|---|
+| `--model` | Path to the downloaded GGUF file |
+| `--host 0.0.0.0` | Listen on all interfaces (needed for Docker interop if used later) |
+| `--port 8080` | Must match `LLM_BASE_URL` in your `.env` |
+| `--ctx-size 8192` | Context window in tokens — 8192 is enough for RAG (raise on GPU hosts) |
+| `--threads N` | Set to your **physical** core count (e.g., 8 for an 8-core CPU). Using logical/hyperthreaded count may reduce throughput |
+| `--parallel 1` | Number of concurrent requests — 1 for single-user CLI use |
+
+You should see output like:
+
+```
+main: server is listening on 0.0.0.0:8080
+```
+
+**Verify it's working** (optional, from another terminal):
+
+```bash
+curl http://localhost:8080/v1/models
+```
+
+This should return JSON with the model name.
+
+##### Step 5 — Configure and run Loominary
+
+Ensure your `.env` has these values:
+
+```ini
+QDRANT_URL=http://localhost:6333    # will auto-fallback to embedded if unreachable
+LLM_BASE_URL=http://localhost:8080
+```
+
+Then, in your **original terminal** (not the one running llama-server):
+
+```bash
+uv run main.py
+```
+
+If you have existing transcripts, select **Reindex all transcripts** first to build the vector index. Then select **Chat with library** to start asking questions.
+
+**What happens with Qdrant:** Loominary tries to connect to `QDRANT_URL`. If no Qdrant server is running, it prints a notice and automatically falls back to embedded file-based storage at `data/qdrant_local/`. No data is lost — the embedded database persists across runs.
+
+```
+Qdrant server at http://localhost:6333 is unreachable — falling back to local storage at data\qdrant_local
+```
+
+---
+
+#### Option B — Docker Compose (airgapped / production)
+
+**When to use:** Airgapped environments, team deployments, persistent server setup, or when you want everything containerized with no local installs.
+
+This runs three services in Docker: Qdrant (vector DB), llama.cpp (LLM server), and the Loominary app.
+
+**Prerequisites:** Docker and Docker Compose.
+
+**Important:** The initial build downloads ~24 GB of model weights (BGE-M3 + Qwen3.5 GGUF) and bakes them into the images. After building, the images are fully self-contained and need no network access.
+
+```bash
+# Build all images (one-time, ~24 GB download)
+docker compose build
+
+# Start all services
+docker compose up -d
+
+# Run the Loominary CLI
+docker compose exec -it loominary uv run python main.py
+```
+
+**GPU hosts** — use the GPU override for faster LLM inference and larger context:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
+```
+
+This adds NVIDIA GPU passthrough to the LLM container and enables CUDA for embeddings.
+
+**Services:**
+
+| Service | Image | Port | Purpose |
+|---|---|---|---|
+| `qdrant` | `qdrant/qdrant:v1.12.6` | 6333, 6334 | Vector database (persistent volume) |
+| `llm` | Custom (llama.cpp + GGUF) | 8080 | LLM generation (OpenAI-compatible API) |
+| `loominary` | Custom (app + BGE-M3) | — | The CLI app |
+
+**Stopping:**
+
+```bash
+docker compose down          # stop services, keep data
+docker compose down -v       # stop and delete Qdrant storage volume
+```
+
+---
+
+### Chat example
+
+```
+? What would you like to do? Chat with library
+
+Library loaded: 847 chunks across your transcripts.
+Type your question, or 'quit' to exit.
+
+? You: What did Jensen Huang say about scaling laws?
+
+Jensen discussed how scaling laws continue to hold but are shifting from
+purely pre-training compute to inference-time compute [1]. He emphasized
+that NVIDIA's architecture is designed to scale across both dimensions [3],
+and that the industry is moving toward "test-time compute" where models
+think longer rather than just training longer [2].
+
+  [1] (Lex Fridman Podcast — Jensen Huang: NVIDIA, 2026-03-23)
+  [2] (Lex Fridman Podcast — Jensen Huang: NVIDIA, 2026-03-23)
+  [3] (Lex Fridman Podcast — Jensen Huang: NVIDIA, 2026-03-23)
+```
+
+---
+
 ## Configuration
 
 All settings live in `.env`. Copy `.env.example` to get started.
@@ -296,6 +558,30 @@ Get a free key at [podcastindex.org](https://podcastindex.org/login).
 | `LOOMINARY_DB_PATH` | `./data/loominary.duckdb` | Location of the local DuckDB database |
 | `LOOMINARY_TRANSCRIPTS_DIR` | `./data/transcripts` | Where transcript `.txt` files are saved |
 | `LOOMINARY_TMP_DIR` | `./tmp` | Temporary folder for MP3 downloads (auto-cleaned after transcription) |
+
+### RAG / Vector Store
+
+| Variable | Default | Description |
+|---|---|---|
+| `QDRANT_URL` | `http://localhost:6333` | Qdrant server URL. If unreachable, automatically falls back to embedded local storage at `data/qdrant_local/` |
+| `QDRANT_COLLECTION` | `loominary_rag` | Qdrant collection name |
+| `EMBED_MODEL_PATH` | `BAAI/bge-m3` | HuggingFace model ID or local path to BGE-M3 weights. In Docker this is baked to `/models/bge-m3` |
+| `EMBED_DEVICE` | `auto` | `auto` (detect GPU), `cpu`, or `cuda` |
+| `SPARSE_MODEL_NAME` | `Qdrant/bm25` | FastEmbed sparse model for BM25 |
+| `RAG_CHUNK_TOKENS` | `512` | Tokens per chunk |
+| `RAG_CHUNK_OVERLAP` | `64` | Overlap tokens between chunks |
+| `RAG_TOP_K` | `8` | Number of hybrid search candidates |
+| `RAG_CONTEXT_K` | `5` | Number of chunks injected into the LLM prompt |
+
+### LLM (llama.cpp server)
+
+| Variable | Default | Description |
+|---|---|---|
+| `LLM_BASE_URL` | `http://localhost:8080` | OpenAI-compatible endpoint (llama.cpp server, vLLM, Ollama, etc.) |
+| `LLM_MODEL` | `qwen3.5-35b-a3b` | Model name sent in the API request |
+| `LLM_CTX_SIZE` | `8192` | Context window (set higher on GPU hosts) |
+| `LLM_TEMPERATURE` | `0.2` | Generation temperature |
+| `LLM_MAX_TOKENS` | `4096` | Max response tokens (includes reasoning + answer) |
 
 ---
 
@@ -404,16 +690,31 @@ print(c.execute('SELECT name, publisher, total_episodes FROM shows').df())
 
 ```
 Loominary/
-├── main.py                        # Entry point — mode selector (podcast / meeting)
+├── main.py                        # Entry point — mode selector
 ├── pyproject.toml                 # Dependencies (uv-managed)
 ├── .env                           # Your secrets (gitignored)
 ├── .env.example                   # Template
+├── Dockerfile                     # App image (bakes BGE-M3 weights)
+├── docker-compose.yml             # Qdrant + llama.cpp + app
+├── docker-compose.gpu.yml         # GPU override
 ├── meetings/                      # YAML configs for automatic meeting mode
 │   └── my-meeting.yaml
+│
+├── docker/
+│   └── llm.Dockerfile             # llama.cpp server + Qwen3.5 GGUF
 │
 ├── loominary/
 │   ├── config.py                  # Environment loading + validation
 │   ├── cli.py                     # Podcast interactive menus + workflow
+│   │
+│   ├── rag/                       # RAG chatbot pipeline
+│   │   ├── chunker.py             # Fixed-window token splitter (BGE-M3 tokenizer)
+│   │   ├── embedder.py            # BGE-M3 dense + FastEmbed BM25 sparse
+│   │   ├── qdrant.py              # Client, collection setup, server/local fallback
+│   │   ├── indexer.py             # Index files, reindex all, auto-index hook
+│   │   ├── retriever.py           # Hybrid search (dense + sparse + RRF fusion)
+│   │   ├── chat.py                # LLM streaming client + grounded prompt
+│   │   └── cli.py                 # Chat REPL + reindex command
 │   │
 │   ├── meeting/                   # Meeting recorder pipeline
 │   │   ├── pipeline.py            # Automatic + manual mode orchestrators
@@ -444,7 +745,7 @@ Loominary/
 │   │   └── whisper_engine.py
 │   │
 │   ├── database/
-│   │   ├── schema.py              # CREATE TABLE statements (shows, episodes, transcripts, meetings, meeting_transcripts)
+│   │   ├── schema.py              # CREATE TABLE statements
 │   │   └── repository.py          # upsert/insert/query functions
 │   │
 │   ├── drive/
@@ -456,8 +757,9 @@ Loominary/
 │
 ├── data/
 │   ├── loominary.duckdb           # Local database (gitignored)
-│   ├── transcripts/               # Output .txt files — podcast_ and meeting_ prefixed (gitignored)
-│   └── recordings/                # Meeting screen recordings (gitignored)
+│   ├── qdrant_local/              # Embedded Qdrant storage (when no server)
+│   ├── transcripts/               # Output .txt files — podcast_ and meeting_ prefixed
+│   └── recordings/                # Meeting screen recordings
 │       └── YYYY-MM-DD_name/
 │           ├── recording.mp4
 │           ├── audio.wav
@@ -488,6 +790,15 @@ Enable Stereo Mix in Windows Sound settings: right-click the speaker icon → So
 
 **`RecorderError: ffmpeg not found on PATH`** (meeting mode)
 Install ffmpeg via `winget install ffmpeg` and restart your terminal.
+
+**`Qdrant server at http://localhost:6333 is unreachable — falling back to local storage`**
+This is informational, not an error. Loominary automatically falls back to embedded file-based Qdrant at `data/qdrant_local/`. If you want to use a Qdrant server instead, either start one via `docker run -d -p 6333:6333 qdrant/qdrant:v1.12.6` or use `docker compose up`.
+
+**`httpx.ConnectError` when using "Chat with library"**
+The LLM server (llama.cpp) isn't running. Start it with `llama-server --model <path-to-gguf> --host 0.0.0.0 --port 8080 --ctx-size 8192`, or run the full stack with `docker compose up`.
+
+**Chat says "The vector index is empty"**
+You need to index your transcripts first. Select **Reindex all transcripts** from the main menu. This reads all transcript files from DuckDB, chunks them, embeds them, and stores them in Qdrant.
 
 ---
 

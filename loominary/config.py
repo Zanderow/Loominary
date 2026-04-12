@@ -43,6 +43,24 @@ LOOMINARY_DB_PATH: Path = Path(_get("LOOMINARY_DB_PATH", "./data/loominary.duckd
 LOOMINARY_TRANSCRIPTS_DIR: Path = Path(_get("LOOMINARY_TRANSCRIPTS_DIR", "./data/transcripts"))
 LOOMINARY_TMP_DIR: Path = Path(_get("LOOMINARY_TMP_DIR", "./tmp"))
 
+# RAG / Qdrant
+QDRANT_URL: str = _get("QDRANT_URL", "http://localhost:6333")
+QDRANT_COLLECTION: str = _get("QDRANT_COLLECTION", "loominary_rag")
+EMBED_MODEL_PATH: str = _get("EMBED_MODEL_PATH", "BAAI/bge-m3")
+EMBED_DEVICE: str = _get("EMBED_DEVICE", "auto")  # auto|cpu|cuda
+SPARSE_MODEL_NAME: str = _get("SPARSE_MODEL_NAME", "Qdrant/bm25")
+RAG_CHUNK_TOKENS: int = int(_get("RAG_CHUNK_TOKENS", "512"))
+RAG_CHUNK_OVERLAP: int = int(_get("RAG_CHUNK_OVERLAP", "64"))
+RAG_TOP_K: int = int(_get("RAG_TOP_K", "8"))
+RAG_CONTEXT_K: int = int(_get("RAG_CONTEXT_K", "5"))
+
+# Local LLM (llama.cpp server, OpenAI-compatible)
+LLM_BASE_URL: str = _get("LLM_BASE_URL", "http://localhost:8080")
+LLM_MODEL: str = _get("LLM_MODEL", "qwen3.5-35b-a3b")
+LLM_CTX_SIZE: int = int(_get("LLM_CTX_SIZE", "8192"))
+LLM_TEMPERATURE: float = float(_get("LLM_TEMPERATURE", "0.2"))
+LLM_MAX_TOKENS: int = int(_get("LLM_MAX_TOKENS", "4096"))
+
 
 def validate_spotify() -> None:
     """Fail fast if Spotify credentials are missing."""

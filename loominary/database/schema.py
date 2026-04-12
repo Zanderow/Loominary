@@ -77,6 +77,18 @@ CREATE TABLE IF NOT EXISTS meeting_transcripts (
 );
 """
 
+CREATE_RAG_INDEXED = """
+CREATE TABLE IF NOT EXISTS rag_indexed (
+    file_path     VARCHAR PRIMARY KEY,
+    source_type   VARCHAR NOT NULL,   -- 'podcast' | 'meeting'
+    source_id     VARCHAR,            -- episode_spotify_id or meeting_id (as text)
+    file_hash     VARCHAR NOT NULL,
+    chunk_count   INTEGER NOT NULL,
+    embed_model   VARCHAR NOT NULL,
+    indexed_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+"""
+
 ALL_STATEMENTS = [
     CREATE_SHOWS,
     CREATE_EPISODES,
@@ -86,4 +98,5 @@ ALL_STATEMENTS = [
     CREATE_MEETINGS,
     CREATE_MEETING_TRANSCRIPTS_SEQ,
     CREATE_MEETING_TRANSCRIPTS,
+    CREATE_RAG_INDEXED,
 ]

@@ -234,6 +234,10 @@ def _process_episode(db_conn, show: ShowMetadata, episode: EpisodeMetadata) -> N
 
     _show_summary(episode, txt_path, result, word_count, transcribe_elapsed)
 
+    # Auto-index into vector store
+    from loominary.rag.indexer import auto_index_after_transcription
+    auto_index_after_transcription(db_conn, txt_path, "podcast")
+
     # Optional Google Drive upload
     if config.GOOGLE_CLIENT_SECRETS_FILE:
         upload = questionary.confirm("Upload transcript to Google Drive?", default=False).ask()

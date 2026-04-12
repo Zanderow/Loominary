@@ -25,6 +25,8 @@ def main() -> None:
             choices=[
                 "Transcribe a podcast",
                 "Record a meeting",
+                "Chat with library",
+                "Reindex all transcripts",
             ],
         ).ask()
     except KeyboardInterrupt:
@@ -38,6 +40,25 @@ def main() -> None:
         try:
             from loominary.meeting.pipeline import run as meeting_run
             meeting_run(db_conn)
+        except KeyboardInterrupt:
+            console.print("\n[dim]Interrupted.[/dim]")
+        sys.exit(0)
+
+    if mode == "Chat with library":
+        try:
+            from loominary.rag.cli import chat_repl
+            chat_repl(db_conn)
+        except KeyboardInterrupt:
+            console.print("\n[dim]Interrupted.[/dim]")
+        sys.exit(0)
+
+    if mode == "Reindex all transcripts":
+        try:
+            force = questionary.confirm(
+                "Force re-index even if files are unchanged?", default=False
+            ).ask()
+            from loominary.rag.cli import run_reindex
+            run_reindex(db_conn, force=bool(force))
         except KeyboardInterrupt:
             console.print("\n[dim]Interrupted.[/dim]")
         sys.exit(0)

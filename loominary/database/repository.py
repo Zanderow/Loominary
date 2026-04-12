@@ -224,6 +224,122 @@ def insert_meeting_transcript(
     return result[0]
 
 
+def get_podcast_metadata_for_file(
+    conn: duckdb.DuckDBPyConnection, file_path: str
+) -> Optional[dict]:
+    """Look up podcast metadata for a transcript file path."""
+    row = conn.execute(
+        """
+        SELECT t.episode_spotify_id, e.name AS episode_name, e.release_date,
+               s.spotify_id AS show_id, s.name AS show_name, s.publisher,
+               t.language_detected
+        FROM transcripts t
+        JOIN episodes e ON t.episode_spotify_id = e.spotify_id
+        JOIN shows s ON e.show_spotify_id = s.spotify_id
+        WHERE t.local_file_path = ?
+        LIMIT 1
+        """,
+        [file_path],
+    ).fetchone()
+    if not row:
+        return None
+    return {
+        "episode_id": row[0],
+        "episode_name": row[1],
+        "release_date": str(row[2]) if row[2] else None,
+        "show_id": row[3],
+        "show_name": row[4],
+        "publisher": row[5],
+        "language": row[6],
+    }
+
+
+def get_meeting_metadata_for_file(
+    conn: duckdb.DuckDBPyConnection, file_path: str
+) -> Optional[dict]:
+    """Look up meeting metadata for a transcript file path."""
+    row = conn.execute(
+        """
+        SELECT m.id, m.name, m.platform, m.url, m.start_time, mt.language
+        FROM meeting_transcripts mt
+        JOIN meetings m ON mt.meeting_id = m.id
+        WHERE mt.transcript_path = ?
+        LIMIT 1
+        """,
+        [file_path],
+    ).fetchone()
+    if not row:
+        return None
+    return {
+        "meeting_id": str(row[0]),
+        "meeting_name": row[1],
+        "platform": row[2],
+        "url": row[3],
+        "start_time": str(row[4]) if row[4] else None,
+        "language": row[5],
+    }
+
+
+def list_all_transcript_files(conn: duckdb.DuckDBPyConnection) -> list[dict]:
+    """Return every transcript file (podcast + meeting) with source_type tag."""
+    out: list[dict] = []
+    for row in conn.execute(
+        "SELECT local_file_path FROM transcripts WHERE local_file_path IS NOT NULL"
+    ).fetchall():
+        out.append({"source_type": "podcast", "file_path": row[0]})
+    for row in conn.execute(
+        "SELECT transcript_path FROM meeting_transcripts WHERE transcript_path IS NOT NULL"
+    ).fetchall():
+        out.append({"source_type": "meeting", "file_path": row[0]})
+    return out
+
+
+def get_rag_indexed(
+    conn: duckdb.DuckDBPyConnection, file_path: str
+) -> Optional[dict]:
+    row = conn.execute(
+        "SELECT file_path, file_hash, chunk_count, embed_model FROM rag_indexed WHERE file_path = ?",
+        [file_path],
+    ).fetchone()
+    if not row:
+        return None
+    return {
+        "file_path": row[0],
+        "file_hash": row[1],
+        "chunk_count": row[2],
+        "embed_model": row[3],
+    }
+
+
+def upsert_rag_indexed(
+    conn: duckdb.DuckDBPyConnection,
+    file_path: str,
+    source_type: str,
+    source_id: Optional[str],
+    file_hash: str,
+    chunk_count: int,
+    embed_model: str,
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO rag_indexed (file_path, source_type, source_id, file_hash, chunk_count, embed_model)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT (file_path) DO UPDATE SET
+            source_type = excluded.source_type,
+            source_id = excluded.source_id,
+            file_hash = excluded.file_hash,
+            chunk_count = excluded.chunk_count,
+            embed_model = excluded.embed_model,
+            indexed_at = now()
+        """,
+        [file_path, source_type, source_id, file_hash, chunk_count, embed_model],
+    )
+
+
+def delete_rag_indexed(conn: duckdb.DuckDBPyConnection, file_path: str) -> None:
+    conn.execute("DELETE FROM rag_indexed WHERE file_path = ?", [file_path])
+
+
 def get_similar_transcripts(
     conn: duckdb.DuckDBPyConnection,
     show_spotify_id: str,

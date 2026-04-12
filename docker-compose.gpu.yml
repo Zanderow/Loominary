@@ -1,0 +1,35 @@
+# GPU override — use with: docker compose -f docker-compose.yml -f docker-compose.gpu.yml up
+services:
+  llm:
+    build:
+      context: .
+      dockerfile: docker/llm.Dockerfile
+      args:
+        - GGML_CUDA=ON
+    image: loominary-llm:gpu
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    command:
+      - "--model"
+      - "/models/qwen3.5-35b-a3b.gguf"
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "8080"
+      - "--ctx-size"
+      - "16384"
+      - "--threads"
+      - "4"
+      - "--parallel"
+      - "2"
+      - "--n-gpu-layers"
+      - "99"
+
+  loominary:
+    environment:
+      - EMBED_DEVICE=auto

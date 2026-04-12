@@ -1,0 +1,42 @@
+services:
+  qdrant:
+    image: qdrant/qdrant:v1.12.6
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_storage:/qdrant/storage
+    restart: unless-stopped
+
+  llm:
+    build:
+      context: .
+      dockerfile: docker/llm.Dockerfile
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+
+  loominary:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      - qdrant
+      - llm
+    volumes:
+      - ./data:/app/data
+      - ./tmp:/app/tmp
+      - ./meetings:/app/meetings
+    environment:
+      - QDRANT_URL=http://qdrant:6333
+      - LLM_BASE_URL=http://llm:8080
+      - EMBED_MODEL_PATH=/models/bge-m3
+      - EMBED_DEVICE=cpu
+      - HF_HUB_OFFLINE=1
+      - TRANSFORMERS_OFFLINE=1
+    stdin_open: true
+    tty: true
+    restart: "no"
+
+volumes:
+  qdrant_storage:
