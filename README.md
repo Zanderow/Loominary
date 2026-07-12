@@ -16,6 +16,7 @@ Transform podcast episodes into searchable text transcripts — or record and tr
 | Database | DuckDB |
 | Vector store | Qdrant (server or embedded local) |
 | Embeddings | BGE-M3 (1024-dim dense + BM25 sparse) |
+| Reranker | BGE-reranker-v2-m3 (cross-encoder) |
 | LLM | Qwen3.5-35B-A3B via llama.cpp server |
 | CLI | rich · questionary |
 | Google Drive | Google Drive API v3 |
@@ -265,13 +266,14 @@ Loominary includes a built-in RAG (retrieval-augmented generation) chatbot that 
 - **BGE-M3** for dense embeddings (1024-dim)
 - **BM25** for sparse keyword matching
 - **Qdrant** for hybrid vector search (dense + sparse fused with Reciprocal Rank Fusion)
+- **BGE-reranker-v2-m3** cross-encoder for reranking the hybrid candidates
 - **Qwen3.5-35B-A3B** (3B active params, MoE) via llama.cpp for answer generation
 
 ### How it works
 
 1. Transcripts are split into 512-token chunks (with 64-token overlap)
 2. Each chunk is embedded with BGE-M3 (dense) and BM25 (sparse), then stored in Qdrant with metadata (show name, episode title, dates, etc.)
-3. When you ask a question, both embedding types are searched and results are fused with RRF
+3. When you ask a question, both embedding types are searched, results are fused with RRF, and the top 30 candidates are rescored by a cross-encoder reranker; chunks below the relevance floor (`RAG_MIN_RERANK_SCORE`) are dropped so off-topic questions return nothing instead of the least-bad matches
 4. The top 5 relevant chunks are injected into a grounded prompt sent to the LLM
 5. The LLM answers using only the provided excerpts and cites its sources with `[1]`, `[2]`, etc.
 
@@ -570,8 +572,11 @@ Get a free key at [podcastindex.org](https://podcastindex.org/login).
 | `SPARSE_MODEL_NAME` | `Qdrant/bm25` | FastEmbed sparse model for BM25 |
 | `RAG_CHUNK_TOKENS` | `512` | Tokens per chunk |
 | `RAG_CHUNK_OVERLAP` | `64` | Overlap tokens between chunks |
-| `RAG_TOP_K` | `8` | Number of hybrid search candidates |
+| `RAG_TOP_K` | `8` | Number of chunks kept after reranking |
 | `RAG_CONTEXT_K` | `5` | Number of chunks injected into the LLM prompt |
+| `RERANK_MODEL_PATH` | `BAAI/bge-reranker-v2-m3` | HuggingFace model ID or local path to the cross-encoder reranker |
+| `RAG_RERANK_CANDIDATES` | `30` | Hybrid search candidates fed to the reranker |
+| `RAG_MIN_RERANK_SCORE` | `0.3` | Relevance floor (0–1); chunks scoring below this are dropped |
 
 ### LLM (llama.cpp server)
 

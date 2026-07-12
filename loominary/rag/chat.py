@@ -27,7 +27,10 @@ relevant information, say you don't have enough context.
 Cite your sources by referencing the excerpt numbers in square brackets, \
 e.g. [1], [3]. Place citations inline, immediately after the claim they support.
 
-Be concise. Do not reproduce the excerpts verbatim unless the user asks for a quote. /no_think\
+Be concise. Do not reproduce the excerpts verbatim unless the user asks for a quote.
+
+Once you have identified the relevant excerpts, immediately produce your final \
+answer. Do not deliberate further or revisit excerpts you have already evaluated. /no_think\
 """
 
 
@@ -107,6 +110,10 @@ def _stream_llm(
         ],
         "temperature": config.LLM_TEMPERATURE,
         "max_tokens": config.LLM_MAX_TOKENS,
+        "top_p": config.LLM_TOP_P,
+        "frequency_penalty": config.LLM_FREQUENCY_PENALTY,
+        "repetition_penalty": config.LLM_REPETITION_PENALTY,
+        "min_p": config.LLM_MIN_P,
         "stream": True,
     }
 

@@ -53,13 +53,20 @@ RAG_CHUNK_TOKENS: int = int(_get("RAG_CHUNK_TOKENS", "512"))
 RAG_CHUNK_OVERLAP: int = int(_get("RAG_CHUNK_OVERLAP", "64"))
 RAG_TOP_K: int = int(_get("RAG_TOP_K", "8"))
 RAG_CONTEXT_K: int = int(_get("RAG_CONTEXT_K", "5"))
+RERANK_MODEL_PATH: str = _get("RERANK_MODEL_PATH", "BAAI/bge-reranker-v2-m3")
+RAG_RERANK_CANDIDATES: int = int(_get("RAG_RERANK_CANDIDATES", "30"))
+RAG_MIN_RERANK_SCORE: float = float(_get("RAG_MIN_RERANK_SCORE", "0.3"))
 
 # Local LLM (llama.cpp server, OpenAI-compatible)
 LLM_BASE_URL: str = _get("LLM_BASE_URL", "http://localhost:8080")
 LLM_MODEL: str = _get("LLM_MODEL", "qwen3.5-35b-a3b")
 LLM_CTX_SIZE: int = int(_get("LLM_CTX_SIZE", "8192"))
-LLM_TEMPERATURE: float = float(_get("LLM_TEMPERATURE", "0.2"))
+LLM_TEMPERATURE: float = float(_get("LLM_TEMPERATURE", "0.3"))
 LLM_MAX_TOKENS: int = int(_get("LLM_MAX_TOKENS", "4096"))
+LLM_REPETITION_PENALTY: float = float(_get("LLM_REPETITION_PENALTY", "1.1"))
+LLM_MIN_P: float = float(_get("LLM_MIN_P", "0.05"))
+LLM_FREQUENCY_PENALTY: float = float(_get("LLM_FREQUENCY_PENALTY", "0.2"))
+LLM_TOP_P: float = float(_get("LLM_TOP_P", "0.9"))
 
 
 def validate_spotify() -> None:

@@ -1,6 +1,6 @@
-"""BGE-M3 dense embedder + FastEmbed BM25 sparse encoder.
+"""BGE-M3 dense embedder + FastEmbed BM25 sparse encoder + BGE cross-encoder reranker.
 
-Both models are loaded once and cached. Designed to run fully offline once the
+All models are loaded once and cached. Designed to run fully offline once the
 weights are baked into the image (or pre-cached on the host).
 """
 from __future__ import annotations
@@ -12,6 +12,7 @@ from loominary import config
 
 _dense_model = None
 _sparse_model = None
+_reranker = None
 
 
 def _resolve_device() -> str:
@@ -56,6 +57,34 @@ def embed_dense(texts: List[str]) -> List[List[float]]:
         return_colbert_vecs=False,
     )
     return [v.tolist() for v in out["dense_vecs"]]
+
+
+def get_reranker():
+    global _reranker
+    if _reranker is None:
+        from FlagEmbedding import FlagReranker
+        device = _resolve_device()
+        _reranker = FlagReranker(
+            config.RERANK_MODEL_PATH,
+            use_fp16=(device == "cuda"),
+            devices=device,
+            normalize=True,  # sigmoid -> scores in [0, 1], comparable across queries
+        )
+    return _reranker
+
+
+def rerank(query: str, texts: List[str]) -> List[float]:
+    """Score each text's relevance to the query with the cross-encoder.
+
+    Returns one score per text, in [0, 1] (higher = more relevant).
+    """
+    if not texts:
+        return []
+    model = get_reranker()
+    scores = model.compute_score([[query, t] for t in texts])
+    if isinstance(scores, float):  # single pair returns a bare float
+        scores = [scores]
+    return [float(s) for s in scores]
 
 
 def embed_sparse(texts: List[str]) -> List[Tuple[List[int], List[float]]]:

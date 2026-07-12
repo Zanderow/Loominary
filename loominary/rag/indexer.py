@@ -1,8 +1,9 @@
 """Index transcript files (podcasts + meetings) into Qdrant.
 
 Each file is hashed; if the hash matches what's already in `rag_indexed`, the
-file is skipped. On change, all old chunks for that file_path are deleted from
-Qdrant before re-inserting.
+file is skipped. On change, new chunks are upserted first (deterministic point
+IDs overwrite old chunks in place), then any stale tail chunks from a longer
+old version are pruned — so a crash mid-reindex never loses searchable data.
 """
 from __future__ import annotations
 
@@ -18,7 +19,7 @@ from loominary.database import repository
 from loominary.rag import embedder
 from loominary.rag.chunker import chunk_text
 from loominary.rag.qdrant import (
-    delete_by_file_path,
+    delete_stale_chunks,
     ensure_collection,
     get_client,
 )
@@ -35,20 +36,23 @@ def _file_hash(path: Path) -> str:
 
 def _build_metadata_prefix(payload: dict) -> str:
     """Short header prepended to each chunk before embedding so metadata is
-    semantically searchable too."""
+    semantically searchable too. Fields whose value is missing/None are omitted."""
     if payload.get("source_type") == "podcast":
-        bits = [
-            f"Show: {payload.get('show_name', '')}",
-            f"Episode: {payload.get('episode_title', '')}",
-            f"Date: {payload.get('release_date', '')}",
+        fields = [
+            ("Show", payload.get("show_name")),
+            ("Episode", payload.get("episode_title")),
+            ("Date", payload.get("release_date")),
         ]
     else:
-        bits = [
-            f"Meeting: {payload.get('meeting_name', '')}",
-            f"Date: {payload.get('start_time', '')}",
-            f"Platform: {payload.get('platform', '')}",
+        fields = [
+            ("Meeting", payload.get("meeting_name")),
+            ("Date", payload.get("start_time")),
+            ("Platform", payload.get("platform")),
         ]
-    return "\n".join(b for b in bits if b.split(": ", 1)[1]) + "\n\n"
+    bits = [f"{label}: {value}" for label, value in fields if value]
+    if not bits:
+        return ""
+    return "\n".join(bits) + "\n\n"
 
 
 def _resolve_payload(
@@ -129,7 +133,6 @@ def index_file(
     sparse_vecs = embedder.embed_sparse(embed_inputs)
 
     ensure_collection()
-    delete_by_file_path(str(path))
 
     points = []
     for chunk, dense, (sp_idx, sp_val) in zip(chunks, dense_vecs, sparse_vecs):
@@ -156,8 +159,13 @@ def index_file(
             )
         )
 
+    # Upsert first: deterministic point IDs overwrite the old chunks in place,
+    # so a crash mid-reindex never leaves the file unsearchable. Only after the
+    # new chunks are durable do we prune any leftover tail from a longer old
+    # version of the file.
     client = get_client()
     client.upsert(collection_name=config.QDRANT_COLLECTION, points=points, wait=True)
+    delete_stale_chunks(str(path), keep_count=len(chunks))
 
     repository.upsert_rag_indexed(
         db_conn,

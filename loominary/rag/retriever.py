@@ -1,5 +1,10 @@
 """Hybrid search: BGE-M3 dense + BM25 sparse, fused with RRF in a single Qdrant
-Query API call.
+Query API call, then reranked with a cross-encoder.
+
+The hybrid stage casts a wide net (RAG_RERANK_CANDIDATES chunks); the reranker
+scores each candidate against the query and keeps the best top_k. Candidates
+scoring below RAG_MIN_RERANK_SCORE are dropped entirely, so an off-topic
+question returns no hits rather than the least-bad matches.
 
 Returns chunks with full payload for citations.
 """
@@ -20,11 +25,13 @@ def hybrid_search(
     top_k: Optional[int] = None,
     source_type: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
-    """Run hybrid dense + sparse search, fused with RRF.
+    """Run hybrid dense + sparse search, fused with RRF, then cross-encoder
+    reranked and filtered by RAG_MIN_RERANK_SCORE.
 
     Returns a list of dicts (payload + score) ordered best-first.
     """
     top_k = top_k or config.RAG_TOP_K
+    candidates = max(config.RAG_RERANK_CANDIDATES, top_k)
     ensure_collection()
 
     dense_vec = embedder.embed_dense([query])[0]
@@ -48,25 +55,44 @@ def hybrid_search(
             qm.Prefetch(
                 query=dense_vec,
                 using="dense",
-                limit=top_k * 2,
+                limit=candidates,
                 filter=filter_cond,
             ),
             qm.Prefetch(
                 query=qm.SparseVector(indices=sp_idx, values=sp_val),
                 using="bm25",
-                limit=top_k * 2,
+                limit=candidates,
                 filter=filter_cond,
             ),
         ],
         query=qm.FusionQuery(fusion=qm.Fusion.RRF),
-        limit=top_k,
+        limit=candidates,
         with_payload=True,
     )
 
     hits: List[Dict[str, Any]] = []
     for point in results.points:
         item = dict(point.payload or {})
-        item["_score"] = point.score
+        item["_rrf_score"] = point.score
         item["_id"] = point.id
         hits.append(item)
-    return hits
+
+    return _rerank_and_filter(query, hits, top_k)
+
+
+def _rerank_and_filter(
+    query: str,
+    hits: List[Dict[str, Any]],
+    top_k: int,
+) -> List[Dict[str, Any]]:
+    """Score hits with the cross-encoder, drop low-relevance ones, keep top_k."""
+    if not hits:
+        return []
+
+    scores = embedder.rerank(query, [hit.get("text", "") for hit in hits])
+    for hit, score in zip(hits, scores):
+        hit["_score"] = score
+
+    hits.sort(key=lambda h: h["_score"], reverse=True)
+    kept = [h for h in hits if h["_score"] >= config.RAG_MIN_RERANK_SCORE]
+    return kept[:top_k]

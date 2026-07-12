@@ -71,6 +71,7 @@ def ensure_collection() -> None:
         ("episode_id", qm.PayloadSchemaType.KEYWORD),
         ("show_name", qm.PayloadSchemaType.KEYWORD),
         ("meeting_id", qm.PayloadSchemaType.KEYWORD),
+        ("chunk_index", qm.PayloadSchemaType.INTEGER),
     ]:
         try:
             client.create_payload_index(
@@ -80,6 +81,35 @@ def ensure_collection() -> None:
             )
         except Exception:
             pass
+
+
+def delete_stale_chunks(file_path: str, keep_count: int) -> None:
+    """Remove chunks with chunk_index >= keep_count for a transcript file.
+
+    Called after re-indexing upserts the new chunks (which overwrite the old
+    ones in place thanks to deterministic point IDs), so a file that shrank
+    doesn't leave orphaned tail chunks behind.
+    """
+    client = get_client()
+    if not client.collection_exists(config.QDRANT_COLLECTION):
+        return
+    client.delete(
+        collection_name=config.QDRANT_COLLECTION,
+        points_selector=qm.FilterSelector(
+            filter=qm.Filter(
+                must=[
+                    qm.FieldCondition(
+                        key="file_path",
+                        match=qm.MatchValue(value=file_path),
+                    ),
+                    qm.FieldCondition(
+                        key="chunk_index",
+                        range=qm.Range(gte=keep_count),
+                    ),
+                ]
+            )
+        ),
+    )
 
 
 def delete_by_file_path(file_path: str) -> None:
