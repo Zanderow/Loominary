@@ -1,4 +1,4 @@
-# Loominary app — bakes BGE-M3 + BM25 weights for fully-offline use.
+# Loominary app — bakes BGE-M3 + BM25 + reranker weights for fully-offline use.
 FROM python:3.11-slim AS base
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -24,6 +24,11 @@ snapshot_download('BAAI/bge-m3', local_dir='/models/bge-m3'); \
 "
 
 RUN uv run python -c "\
+from huggingface_hub import snapshot_download; \
+snapshot_download('BAAI/bge-reranker-v2-m3', local_dir='/models/bge-reranker-v2-m3'); \
+"
+
+RUN uv run python -c "\
 from fastembed import SparseTextEmbedding; \
 SparseTextEmbedding(model_name='Qdrant/bm25'); \
 "
@@ -32,11 +37,13 @@ SparseTextEmbedding(model_name='Qdrant/bm25'); \
 FROM base AS runtime
 
 COPY --from=model-dl /models/bge-m3 /models/bge-m3
+COPY --from=model-dl /models/bge-reranker-v2-m3 /models/bge-reranker-v2-m3
 COPY --from=model-dl /root/.cache/fastembed /root/.cache/fastembed
 
 ENV HF_HUB_OFFLINE=1 \
     TRANSFORMERS_OFFLINE=1 \
     EMBED_MODEL_PATH=/models/bge-m3 \
+    RERANK_MODEL_PATH=/models/bge-reranker-v2-m3 \
     QDRANT_URL=http://qdrant:6333 \
     LLM_BASE_URL=http://llm:8080
 

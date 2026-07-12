@@ -456,10 +456,10 @@ This runs three services in Docker: Qdrant (vector DB), llama.cpp (LLM server), 
 
 **Prerequisites:** Docker and Docker Compose.
 
-**Important:** The initial build downloads ~24 GB of model weights (BGE-M3 + Qwen3.5 GGUF) and bakes them into the images. After building, the images are fully self-contained and need no network access.
+**Important:** The initial build downloads ~26 GB of model weights (BGE-M3 + BGE-reranker-v2-m3 + Qwen3.5 GGUF) and bakes them into the images. After building, the images are fully self-contained and need no network access.
 
 ```bash
-# Build all images (one-time, ~24 GB download)
+# Build all images (one-time, ~26 GB download)
 docker compose build
 
 # Start all services
@@ -574,7 +574,7 @@ Get a free key at [podcastindex.org](https://podcastindex.org/login).
 | `RAG_CHUNK_OVERLAP` | `64` | Overlap tokens between chunks |
 | `RAG_TOP_K` | `8` | Number of chunks kept after reranking |
 | `RAG_CONTEXT_K` | `5` | Number of chunks injected into the LLM prompt |
-| `RERANK_MODEL_PATH` | `BAAI/bge-reranker-v2-m3` | HuggingFace model ID or local path to the cross-encoder reranker |
+| `RERANK_MODEL_PATH` | `BAAI/bge-reranker-v2-m3` | HuggingFace model ID or local path to the cross-encoder reranker. In Docker this is baked to `/models/bge-reranker-v2-m3` |
 | `RAG_RERANK_CANDIDATES` | `30` | Hybrid search candidates fed to the reranker |
 | `RAG_MIN_RERANK_SCORE` | `0.3` | Relevance floor (0–1); chunks scoring below this are dropped |
 
@@ -699,7 +699,7 @@ Loominary/
 ├── pyproject.toml                 # Dependencies (uv-managed)
 ├── .env                           # Your secrets (gitignored)
 ├── .env.example                   # Template
-├── Dockerfile                     # App image (bakes BGE-M3 weights)
+├── Dockerfile                     # App image (bakes BGE-M3 + reranker weights)
 ├── docker-compose.yml             # Qdrant + llama.cpp + app
 ├── docker-compose.gpu.yml         # GPU override
 ├── meetings/                      # YAML configs for automatic meeting mode
